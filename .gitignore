@@ -1,0 +1,11 @@
+#Basic
+node_modules
+package-lock.json
+generated
+.claude
+
+# Keep environment variables out of version control
+.env
+config.yml
+
+/generated/prisma
