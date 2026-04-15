@@ -161,7 +161,7 @@ function askFolderName(currentDir) {
 
 async function previewAndConfirm(method, targetDir) {
   const relativePath = path.relative(routesDir, targetDir)
-  const apiPath = `domain.com/${relativePath.replace(/\\/g, '/')}`
+  const apiPath = `domain.com/api/${relativePath.replace(/\\/g, '/')}`
 
   log('cyan', `\n📋 Preview:`)
   log('yellow', `  API: ${apiPath}`)

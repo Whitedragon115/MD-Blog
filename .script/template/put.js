@@ -1,5 +1,7 @@
 module.exports = {
 
+    auth: true,
+
     /**
      * @param {import('express').Request} req
      * @param {import('express').Response} res
