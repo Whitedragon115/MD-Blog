@@ -25,6 +25,8 @@ function loadConfig() {
 const config = loadConfig()
 const PORT = config.server?.port || process.env.PORT || 3000
 const HOST = config.server?.host || process.env.HOST || 'localhost'
+const AUTH_TOKEN = process.env.AUTH_TOKEN || ''
+const globalAuthEnabled = config.auth === undefined ? true : typeof config.auth === 'boolean' ? config.auth : config.auth?.enabled !== false
 
 const app = express()
 const routesDir = path.join(__dirname, 'routes')
@@ -38,12 +40,34 @@ app.use('/openapi.json', express.static(path.join(__dirname, 'docs', 'openapi.js
 app.use('/docs', express.static(path.join(__dirname, 'docs')))
 
 const METHOD_FILES = {
-  'route.js': 'get',
-  'get.js': 'get',
-  'post.js': 'post',
-  'put.js': 'put',
-  'delete.js': 'delete',
-  'patch.js': 'patch',
+  'get.js': 'GET',
+  'post.js': 'POST',
+  'put.js': 'PUT',
+  'delete.js': 'DELETE',
+  'patch.js': 'PATCH',
+}
+
+const EXPRESS_METHODS = {
+  GET: 'get',
+  POST: 'post',
+  PUT: 'put',
+  DELETE: 'delete',
+  PATCH: 'patch',
+}
+
+function authMiddleware(req, res, next) {
+  if (!AUTH_TOKEN) {
+    return res.status(500).json({ message: 'AUTH_TOKEN is not configured' })
+  }
+
+  const authorization = req.headers.authorization || ''
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : authorization
+
+  if (token !== AUTH_TOKEN) {
+    return res.status(401).json({ message: 'Unauthorized' })
+  }
+
+  next()
 }
 
 function registerRoutes(dir) {
@@ -63,16 +87,34 @@ function registerRoutes(dir) {
     if (!entry.isFile() || !method) continue
 
     const relativeDir = path.relative(routesDir, dir).replace(/\\/g, '/')
-    const routePath = '/' + relativeDir
+    const routePath = '/api/' + relativeDir
+    const expressMethod = EXPRESS_METHODS[method]
 
-    const handler = require(fullPath)
-    app[method](routePath, handler)
+    const routeModule = require(fullPath)
+    const routeObject = routeModule && typeof routeModule === 'object' ? routeModule : {}
+    const handler = routeObject?.[method] || routeObject?.default?.[method] || routeModule
+    const routeAuthEnabled = globalAuthEnabled && routeObject.auth !== false && routeObject.default?.auth !== false
+
+    if (typeof handler !== 'function' || !expressMethod || typeof app[expressMethod] !== 'function') {
+      console.warn(`Skipped route: ${method} ${routePath} -> ${fullPath}`)
+      continue
+    }
+
+    if (routeAuthEnabled) {
+      app[expressMethod](routePath, authMiddleware, handler)
+    } else {
+      app[expressMethod](routePath, handler)
+    }
 
     console.log(`Registered route: ${method.toUpperCase()} ${routePath} -> ${fullPath}`)
   }
 }
 
 registerRoutes(routesDir)
+
+app.use((req, res) => {
+  req.socket.destroy()
+})
 
 const server = app.listen(PORT, HOST, () => {
 
@@ -81,8 +123,26 @@ const server = app.listen(PORT, HOST, () => {
 
 })
 
+const sockets = new Set()
+
+server.on('connection', (socket) => {
+  sockets.add(socket)
+
+  socket.on('close', () => {
+    sockets.delete(socket)
+  })
+})
+
 function shutdown(signal) {
+  if (server.listening === false) {
+    process.exit(0)
+  }
+
   console.log(`\nReceived ${signal}. Shutting down server...`)
+
+  for (const socket of sockets) {
+    socket.destroy()
+  }
 
   server.close((error) => {
     if (error) {
@@ -93,12 +153,7 @@ function shutdown(signal) {
     console.log('Server stopped')
     process.exit(0)
   })
-
-  setTimeout(() => {
-    console.error('Forced shutdown after timeout')
-    process.exit(1)
-  }, 10000).unref()
 }
 
-process.on('SIGINT', () => shutdown('SIGINT'))
-process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.once('SIGINT', () => shutdown('SIGINT'))
+process.once('SIGTERM', () => shutdown('SIGTERM'))
